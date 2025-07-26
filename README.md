@@ -156,6 +156,38 @@ for i, message in enumerate(messages, 1):
 
 ---
 
+1. What is TCP Window Scaling (Briefly)?
+
+"At its core, TCP Window Scaling is a crucial feature that allows modern networks to achieve high speeds. Without it, TCP connections are limited to a very small 'data-in-flight' capacity (around 64 Kilobytes). Window Scaling effectively multiplies this capacity, allowing much more data to be sent before an acknowledgment is needed, making high-speed, long-distance communication efficient. This capability is negotiated right at the start of a TCP connection, during the SYN/SYN-ACK handshake."
+
+2. What I Have Done (The Attack):
+
+"My demonstration involves a Man-in-the-Middle (MITM) attack. I've used ARP poisoning to position my attacker machine directly between a client and a server. This means all their network traffic passes through my attacker."
+
+"Once in the middle, my attacker actively intercepts the initial SYN and SYN-ACK packets that are crucial for setting up a TCP connection. These are the packets where the Window Scale option is negotiated. My attack script specifically modifies these packets, for approximately half of the connections, to effectively disable TCP Window Scaling by setting the negotiation option to zero."
+
+"The result is that for those modified connections, the TCP communication is throttled back to that old, inefficient 64KB window limit. This drastically reduces the connection's effective speed and capacity."
+
+3. How I Am Validating (The Proof):
+
+"I'm validating the attack's success by observing the network traffic using Wireshark."
+
+"1.  ARP Poisoning Confirmation: First, by simply running Wireshark on my attacker machine and seeing all the traffic flowing between the client and server, it confirms my MITM position is active."
+
+"2.  Direct Attack Evidence (Window Scale Manipulation):
+* By applying the Wireshark filter: (ip.addr == 192.168.56.10 or ip.addr == 192.168.56.20) and (tcp.flags.syn == 1 or tcp.flags.syn == 1 and tcp.flags.ack == 1)
+* I can observe the SYN and SYN-ACK packets. I'll see some packets where the 'Window Scale' option (e.g., WS=128) is present, indicating normal negotiation.
+* Crucially, for the packets my attacker modified, you'll notice the absence of this large window scale, or even small Win= values displayed directly. This confirms my script successfully tampered with the negotiation for those connections."
+
+"3.  Impact Evidence (Performance Degradation):
+* When I then filter for: `tcp.analysis.retransmission`
+  * You'll see a massive number of red-highlighted `[TCP Retransmission]` packets. This is the most direct evidence of the attack's success – the connections are struggling severely, constantly re-sending data because the limited window prevents efficient flow.
+* Furthermore, if I filter for: `tcp.window_size == 0`
+  * You'll also see instances where endpoints are forced to advertise a 'Zero Window', meaning they can't accept any more data. This is a severe symptom of the connection failing due to the attack, often leading to connections being abruptly reset.
+
+These observations in Wireshark clearly show that the TCP Window Scaling Attack is effective in degrading connection performance and ultimately causing communication failures."
+
+
 ## Configuration & Setup Guide
 
 This guide provides step-by-step instructions to set up and run the virtual lab environment for the TCP Window Scaling Attack demonstration. All commands are copy-paste ready for your convenience.

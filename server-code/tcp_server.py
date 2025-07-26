@@ -6,6 +6,7 @@ TCP Server for MITM Lab Testing
 import socket
 import threading
 import time
+from datetime import datetime
 import sys
 
 def handle_client(client_socket, client_address):
@@ -16,15 +17,18 @@ def handle_client(client_socket, client_address):
         
         while True:
             # Receive data from client
-            data = client_socket.recv(1024)
+            data = client_socket.recv(4096)
             if not data:
                 break
                 
             message = data.decode()
-            print(f"Received from {client_address}: {message}")
+            now = datetime.now().strftime('%H:%M:%S')
+            print(f"[{now}] Received from {client_address}: {message}")
             
+            # Simulate slow processing to make window scaling attack visible
+            time.sleep(2)
             # Send response back to client
-            response = f"Server received: {message} at {time.strftime('%H:%M:%S')}"
+            response = f"Server received: {message} at {now}"
             client_socket.send(response.encode())
             
     except socket.error as e:
