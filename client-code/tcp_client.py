@@ -6,25 +6,21 @@ TCP Client for MITM Lab Testing
 import socket
 import time
 import sys
-import threading
 
 def tcp_client(server_ip="192.168.56.20", server_port=8080):
     """Simple TCP client to test connections."""
     
     try:
-        # Create socket
         client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         
-        # Set socket options for testing
+
         client_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         
         print(f"Connecting to {server_ip}:{server_port}...")
         
-        # Connect to server
         client_socket.connect((server_ip, server_port))
         print("Connected successfully!")
         
-        # Send some test data
         messages = [
             "Hello Server!",
             "This is a test message",
@@ -45,7 +41,6 @@ def tcp_client(server_ip="192.168.56.20", server_port=8080):
             
             time.sleep(2)  # Wait 2 seconds between messages
         
-        # Close connection
         client_socket.close()
         print("Connection closed.")
         
@@ -66,27 +61,21 @@ def continuous_client(server_ip="192.168.56.20", server_port=8080, interval=5):
             connection_count += 1
             print(f"\n=== Connection #{connection_count} ===")
             
-            # Create new socket for each connection
             client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             client_socket.settimeout(10)  # 10 second timeout
             
-            # Connect
             client_socket.connect((server_ip, server_port))
             print(f"Connected to {server_ip}:{server_port}")
-            
-            # Send data
+        
             message = f"Connection #{connection_count} - {time.strftime('%H:%M:%S')}"
             client_socket.send(message.encode())
             
-            # Receive response
             response = client_socket.recv(1024)
             print(f"Server response: {response.decode()}")
             
-            # Close connection
             client_socket.close()
             print("Connection closed")
             
-            # Wait before next connection
             time.sleep(interval)
             
         except socket.error as e:
