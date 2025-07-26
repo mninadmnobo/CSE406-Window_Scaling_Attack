@@ -473,6 +473,51 @@ window-scaling-attack/
 
 ---
 
+### Wireshark Filters for Validation and Demonstration
+
+**1. To see all SYN and SYN-ACK packets between client and server:**
+
+```
+(ip.addr == 192.168.56.10 or ip.addr == 192.168.56.20) and (tcp.flags.syn == 1)
+```
+*Expected Behavior/Observation:* You will see the initial handshake packets. Under attack, some SYN/SYN-ACK packets will be missing the Window Scale option or have WS=0, indicating the attack is modifying the handshake.
+
+**2. To see Window Scale option negotiation (look for presence/absence of WS):**
+
+```
+tcp.options.wscale
+```
+*Expected Behavior/Observation:* Normally, you should see WS values like 7 (WS=128) in the handshake. Under attack, some connections will have no WS option or WS=0, confirming the attack is disabling window scaling.
+
+**3. To see all retransmissions (evidence of performance degradation):**
+
+```
+tcp.analysis.retransmission
+```
+*Expected Behavior/Observation:* You will see many red-highlighted retransmission packets during the attack, showing that the limited window is causing data to be resent due to congestion and slow acknowledgments.
+
+**4. To see all zero window advertisements (severe congestion):**
+
+```
+tcp.window_size == 0
+```
+*Expected Behavior/Observation:* You will observe packets where the window size is zero, meaning the receiver cannot accept more data. This is a sign of severe congestion and is more frequent under attack.
+
+**5. To see all traffic between client and server (for general inspection):**
+
+```
+ip.addr == 192.168.56.10 or ip.addr == 192.168.56.20
+```
+*Expected Behavior/Observation:* You can inspect all packets between the client and server. Under attack, you will notice increased delays, retransmissions, and possibly abrupt connection resets.
+
+**How to use:**
+- Apply these filters in Wireshark to validate each stage of the attack and defence demonstration.
+- Use the Window Scale filter to confirm the attack is modifying the handshake.
+- Use retransmission and zero window filters to see the impact on performance.
+- Compare normal and attack runs to clearly observe the difference.
+
+---
+
 ### How to Stop/Close and Capture
 
 **tcpdump (Attacker VM, Terminal 4):**
