@@ -145,6 +145,24 @@ for i, message in enumerate(messages, 1):
 
 ---
 
+### TCP Client Defence Logic Explained
+
+The defence client (`tcp_client_defence.py`) is designed to detect and mitigate the effects of a TCP window scaling attack. Here is how it works:
+
+- **Message Generation:**
+  - Sends 20 messages, each 2KB, to stress the connection and make attack effects visible.
+- **Timeout Detection:**
+  - Uses a short timeout (1 second) for each response, making timeouts more likely if the attack is active.
+- **Defence Logic:**
+  - If more than 30% of messages time out, or if there are 3 consecutive timeouts, the client prints a warning about a possible TCP window size zero attack and automatically reconnects to the server.
+  - This helps the client avoid persistently bad connections and demonstrates detection and mitigation.
+- **Summary:**
+  - At the end, prints a summary of sent messages, timeouts, and reconnections, providing clear evidence of the attack's impact and the defence in action.
+
+This logic makes the attack's effect visible in both the console and Wireshark, and demonstrates a practical approach to detecting and recovering from TCP window scaling attacks.
+
+---
+
 ## Summary Table
 | Component         | What It Does                                              | How It Works                                                      | Result                                    |
 |-------------------|----------------------------------------------------------|-------------------------------------------------------------------|--------------------------------------------|

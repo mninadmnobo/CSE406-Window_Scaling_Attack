@@ -6,6 +6,7 @@ TCP Client for MITM Lab Testing
 import socket
 import time
 import sys
+from datetime import datetime
 
 def tcp_client(server_ip="192.168.56.20", server_port=8080):
     """Simple TCP client to test connections."""
@@ -25,22 +26,27 @@ def tcp_client(server_ip="192.168.56.20", server_port=8080):
             "Hello Server!",
             "This is a test message",
             "Testing TCP window scaling",
-            "MITM Lab Test Data"
+            "MITM Lab Test Data",
+            # Add a very large message to simulate abrupt congestion under attack
+            "BIG_MESSAGE: " + ("X" * 500000)  # 500KB payload
         ]
         
         for i, message in enumerate(messages, 1):
-            print(f"Sending message {i}: {message}")
-            client_socket.send(message.encode())
-            
-            # Wait for response
+            now = datetime.now().strftime('%H:%M:%S')
+            print(f"[{now}] Sending message {i} (len={len(message)}): ...")
             try:
-                response = client_socket.recv(1024)
-                print(f"Received response: {response.decode()}")
+                client_socket.sendall(message.encode())
+                # Wait for response
+                client_socket.settimeout(5)
+                response = client_socket.recv(4096)
+                now2 = datetime.now().strftime('%H:%M:%S')
+                print(f"[{now2}] Received response: {response.decode()[:60]}... (truncated)")
             except socket.timeout:
-                print("No response received")
-            
-            time.sleep(2)  # Wait 2 seconds between messages
-        
+                print(f"No response received (timeout) at {datetime.now().strftime('%H:%M:%S')}")
+            except socket.error as e:
+                print(f"Socket error during send/receive: {e}")
+                break
+            time.sleep(1)
         client_socket.close()
         print("Connection closed.")
         
