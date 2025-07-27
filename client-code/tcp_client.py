@@ -62,7 +62,7 @@ def tcp_client(server_ip="192.168.56.20", server_port=8080):
             "Testing TCP window scaling",
             "MITM Lab Test Data",
             # Add a very large message to simulate abrupt congestion under attack
-            "BIG_MESSAGE: " + ("X" * 500000)  # 500KB payload
+            "BIG_MESSAGE: " + ("X" * 1024)
         ]
         for i, message in enumerate(messages, 1):
             now = datetime.now().strftime('%H:%M:%S')

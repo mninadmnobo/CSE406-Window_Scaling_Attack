@@ -9,7 +9,7 @@ from datetime import datetime
 
 # More messages and larger payloads for robust testing
 def generate_messages():
-    base = "X" * 2048  # 2KB payload
+    base = "X" * 1024
     return [
         f"Message {i}: {base}" for i in range(1, 21)
     ]

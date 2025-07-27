@@ -437,6 +437,7 @@ window-scaling-attack/
 ### Step 6: Start Window Scaling Attack
 - **Attacker VM (Terminal 2):**
   ```bash
+  sudo sysctl -w net.ipv4.ip_forward=1
   cd /media/sf_mitm-lab
   sudo python3 tcp_window_attack.py
   ```
