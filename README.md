@@ -498,18 +498,9 @@ window-scaling-attack/
 ---
 
 ### Wireshark Filters for Validation and Demonstration
+**1. To see all traffic between client and server (for general inspection):**
 
-**1. To see all SYN and SYN-ACK packets between client and server:**
-
-```
-(ip.addr == 192.168.56.10 or ip.addr == 192.168.56.20) and (tcp.flags.syn == 1)
-```
-*Expected Behavior/Observation:* You will see the initial handshake packets. Under attack, some SYN/SYN-ACK packets will be missing the Window Scale option or have WS=0, indicating the attack is modifying the handshake.
-
-
-**2. To see all traffic between client and server (for general inspection):**
-
-```
+```wireshark
 ip.addr == 192.168.56.10 or ip.addr == 192.168.56.20
 ```
 *Expected Behavior/Observation:* You can inspect all packets between the client and server. Under attack, you will notice increased delays, retransmissions, and possibly abrupt connection resets.
@@ -522,7 +513,7 @@ ip.addr == 192.168.56.10 or ip.addr == 192.168.56.20
 
 ---
 
-### How to Stop/Close and Capture
+## How to Stop/Close and Capture
 
 **tcpdump (Attacker VM, Terminal 4):**
 - To stop and save the capture, press `Ctrl+C` in the terminal running tcpdump.
