@@ -5,57 +5,41 @@
 
 ### 1. ARP Poisoning (`attacker-code/tcp_arp_poison.py`)
 ```python
-import socket
-import struct
-import time
-
+# ...existing code...
 def send_arp_poison(target_ip, spoof_ip, interface):
     # Build ARP reply packet
-    # ...existing code to construct ARP reply...
+    # ...construct ARP reply...
     sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW)
     sock.bind((interface, 0))
     while True:
         sock.send(arp_packet)
         time.sleep(2)
-
 # Poison both client and server ARP tables
 send_arp_poison(client_ip, server_ip, interface)
 send_arp_poison(server_ip, client_ip, interface)
 ```
-- The attacker sends spoofed ARP replies to both the client and server, claiming to be the other party.
-- This poisons their ARP tables, causing all traffic between them to be routed through the attacker (MITM).
-- The attacker can now intercept, modify, or forward packets as desired.
+**Explanation:**
+- The attacker repeatedly sends forged ARP replies to both the client and server, associating its own MAC address with the IP of the other party.
+- This poisons the ARP tables, ensuring all traffic between client and server is routed through the attacker (MITM position).
 
 ### 2. TCP Window Scaling Attack (`attacker-code/tcp_window_attack.py`)
 ```python
-# Sniff and filter TCP SYN/SYN-ACK packets
-packet, _ = sock_sniff.recvfrom(65535)
-ip_header = packet[14:34]
-iph = struct.unpack(IP_HEADER, ip_header)
-if iph[6] != 6:  # Not TCP
-    continue
-src_ip = socket.inet_ntoa(iph[8])
-dst_ip = socket.inet_ntoa(iph[9])
-
-# Randomly modify 50% of SYN/SYN-ACK packets
-if (src_ip == client_ip and dst_ip == server_ip) or (src_ip == server_ip and dst_ip == client_ip):
-    parsed = parse_tcp_packet(packet[14:])
-    if parsed['flags'] == 0x02 or parsed['flags'] == 0x12:
-        if random.random() < 0.5:
-            print(f"Intercepted SYN/SYN-ACK (MODIFIED): {src_ip}:{parsed['src_port']} -> {dst_ip}:{parsed['dst_port']}")
-            new_packet = craft_tcp_packet(parsed, window_scale=0)
-            sock_send.sendto(new_packet, (parsed['dst_ip'], 0))
-            print("Sent modified packet with Window Scale = 0")
-        else:
-            print(f"Intercepted SYN/SYN-ACK (UNMODIFIED): {src_ip}:{parsed['src_port']} -> {dst_ip}:{parsed['dst_port']}")
-            sock_send.sendto(packet[14:], (parsed['dst_ip'], 0))
+# ...existing code...
+if parsed['flags'] == 0x02 or parsed['flags'] == 0x12:  # SYN or SYN-ACK
+    if random.random() < 0.5:
+        print(f"Intercepted SYN/SYN-ACK (MODIFIED): {src_ip}:{parsed['src_port']} -> {dst_ip}:{parsed['dst_port']}")
+        new_packet = craft_tcp_packet(parsed, window_scale=0)
+        sock_send.sendto(new_packet, (parsed['dst_ip'], 0))
+        print("Sent modified packet with Window Scale = 0")
     else:
+        print(f"Intercepted SYN/SYN-ACK (UNMODIFIED): {src_ip}:{parsed['src_port']} -> {dst_ip}:{parsed['dst_port']}")
         sock_send.sendto(packet[14:], (parsed['dst_ip'], 0))
 ```
-- The attacker sniffs packets on the network interface and filters for TCP SYN and SYN-ACK packets between the client and server.
-- For each handshake packet, the attacker randomly modifies 50% of them, setting the TCP window scale option to zero (disabling window scaling).
-- Modified packets are sent to the destination, while unmodified packets are forwarded as-is.
-- This limits the effective TCP window size for about half of the connections, reducing throughput and degrading performance.
+**Explanation:**
+- The attacker sniffs for TCP handshake packets (SYN, SYN-ACK) between client and server.
+- For each handshake, it randomly decides (e.g., 50% of the time) to modify the TCP window scale option, setting it to zero (disabling window scaling).
+- Modified packets are forwarded to the destination, while others are passed unmodified.
+- This limits the effective TCP window size for some connections, reducing throughput and degrading performance.
 
 ### 3. TCP Server (`server-code/tcp_server.py`)
 ```python
@@ -82,26 +66,88 @@ def tcp_server(host="0.0.0.0", port=8080):
         client_socket, client_address = server_socket.accept()
         threading.Thread(target=handle_client, args=(client_socket, client_address), daemon=True).start()
 ```
+**Explanation:**
 - The server listens for incoming TCP connections and handles each client in a separate thread.
-- It receives messages from the client and sends responses back.
-- The server is unaware of the attack but may experience reduced throughput due to the limited window size on affected connections.
+- It receives messages and sends responses, unaware of the attack but potentially experiencing reduced throughput.
 
 ### 4. TCP Client (`client-code/tcp_client.py`)
 ```python
 import socket
+import time
+import sys
+from datetime import datetime
+
+def send_in_chunks(sock, message, chunk_size=4096):
+    total_sent = 0
+    msg_bytes = message.encode()
+    while total_sent < len(msg_bytes):
+        sent = sock.send(msg_bytes[total_sent:total_sent+chunk_size])
+        if sent == 0:
+            raise RuntimeError("Socket connection broken")
+        total_sent += sent
+
+def send_message_with_retries(client_socket, message, server_ip, server_port, max_retries=3):
+    retries = 0
+    while retries <= max_retries:
+        try:
+            send_in_chunks(client_socket, message)
+            client_socket.settimeout(5)
+            response = client_socket.recv(4096)
+            now2 = datetime.now().strftime('%H:%M:%S')
+            print(f"[{now2}] Received response: {response.decode()[:60]}... (truncated)")
+            return True
+        except socket.timeout:
+            print(f"No response received (timeout) at {datetime.now().strftime('%H:%M:%S')}")
+            retries += 1
+            if retries > max_retries:
+                print("Max retries reached. Skipping message.")
+                return False
+        except socket.error as e:
+            print(f"Socket error during send/receive: {e}")
+            retries += 1
+            if retries > max_retries:
+                print("Max retries reached. Skipping message.")
+                return False
+            print("Reconnecting...")
+            client_socket.close()
+            time.sleep(2)
+            client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            client_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            client_socket.connect((server_ip, server_port))
+    return False
 
 def tcp_client(server_ip="192.168.56.20", server_port=8080):
-    client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    client_socket.connect((server_ip, server_port))
-    messages = ["Hello Server!", "This is a test message", "Testing TCP window scaling", "MITM Lab Test Data"]
-    for message in messages:
-        print(f"Sending: {message}")
-        client_socket.send(message.encode())
-        response = client_socket.recv(1024)
-        print(f"Received: {response.decode()}")
-    client_socket.close()
+    max_retries = 3
+    try:
+        client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        client_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        print(f"Connecting to {server_ip}:{server_port}...")
+        client_socket.connect((server_ip, server_port))
+        print("Connected successfully!")
+        messages = [
+            "Hello Server!",
+            "This is a test message",
+            "Testing TCP window scaling",
+            "MITM Lab Test Data",
+            "BIG_MESSAGE: " + ("X" * 500000)  # 500KB payload
+        ]
+        for i, message in enumerate(messages, 1):
+            now = datetime.now().strftime('%H:%M:%S')
+            print(f"[{now}] Sending message {i} (len={len(message)}): ...")
+            send_message_with_retries(client_socket, message, server_ip, server_port, max_retries)
+            time.sleep(1)
+        client_socket.close()
+        print("Connection closed.")
+    except socket.error as e:
+        print(f"Socket error: {e}")
+    except KeyboardInterrupt:
+        print("\nClient interrupted by user")
+        if 'client_socket' in locals():
+            client_socket.close()
 ```
-- The client connects to the server and sends a series of test messages, waiting for responses.
+**Explanation:**
+- The client connects to the server and sends a series of test messages, including a very large message to stress the connection.
+- It uses chunked sending and retries for robustness, and prints responses.
 - Under attack, the client may experience timeouts and slow communication on connections where window scaling is disabled.
 
 ### 5. TCP Client Defence (`client-code/tcp_client_defence.py`)
@@ -139,72 +185,31 @@ for i, message in enumerate(messages, 1):
             timeout_count = 0
     time.sleep(2)
 ```
-- The defence client monitors for timeouts and tracks the ratio of timeouts to total messages sent.
-- If more than 30% of messages result in timeouts, or if there are 3 consecutive timeouts, it warns the user of a possible window scaling attack and attempts to reconnect.
-- This practical approach helps detect and mitigate the attack by avoiding affected connections and informing the user.
+**Explanation:**
+- The defense client sends multiple messages and tracks timeouts.
+- If more than 30% of messages time out, or if there are 3 consecutive timeouts, it warns the user of a possible TCP window scaling attack and attempts to reconnect.
+- This helps detect and mitigate the attack by avoiding persistently bad connections and informing the user.
 
 ---
 
-### TCP Client Defence Logic Explained
+**Summary Table**
 
-The defence client (`tcp_client_defence.py`) is designed to detect and mitigate the effects of a TCP window scaling attack. Here is how it works:
-
-- **Message Generation:**
-  - Sends 20 messages, each 2KB, to stress the connection and make attack effects visible.
-- **Timeout Detection:**
-  - Uses a short timeout (1 second) for each response, making timeouts more likely if the attack is active.
-- **Defence Logic:**
-  - If more than 30% of messages time out, or if there are 3 consecutive timeouts, the client prints a warning about a possible TCP window size zero attack and automatically reconnects to the server.
-  - This helps the client avoid persistently bad connections and demonstrates detection and mitigation.
-- **Summary:**
-  - At the end, prints a summary of sent messages, timeouts, and reconnections, providing clear evidence of the attack's impact and the defence in action.
-
-This logic makes the attack's effect visible in both the console and Wireshark, and demonstrates a practical approach to detecting and recovering from TCP window scaling attacks.
-
----
-
-## Summary Table
 | Component         | What It Does                                              | How It Works                                                      | Result                                    |
 |-------------------|----------------------------------------------------------|-------------------------------------------------------------------|--------------------------------------------|
 | **ARP Poisoning** | MITM positioning                                         | Spoofs ARP replies to client/server                               | Attacker intercepts all traffic            |
-| **Window Attack** | Degrades TCP performance                                 | Randomly disables window scaling on 50% of handshakes             | Lower throughput, unpredictable performance|
+| **Window Attack** | Degrades TCP performance                                 | Randomly disables window scaling on some handshakes               | Lower throughput, unpredictable performance|
 | **Server**        | Handles client connections                               | Receives and responds to messages                                 | May experience reduced throughput          |
-| **Client**        | Sends messages to server                                 | Connects and communicates                                         | May see timeouts and slow responses        |
+| **Client**        | Sends messages to server                                 | Connects and communicates, uses retries and chunked sending       | May see timeouts and slow responses        |
 | **Defence Client**| Detects and mitigates attack                             | Monitors timeouts, warns user, reconnects                         | Detects attack symptoms, attempts recovery |
 
 ---
 
-1. What is TCP Window Scaling (Briefly)?
+**Validation:**  
+- Use Wireshark to observe handshake packets and confirm window scale manipulation.
+- Look for increased retransmissions and zero window events as evidence of the attack’s impact.
+- The defense client will print warnings and attempt to recover if attack symptoms are detected.
 
-"At its core, TCP Window Scaling is a crucial feature that allows modern networks to achieve high speeds. Without it, TCP connections are limited to a very small 'data-in-flight' capacity (around 64 Kilobytes). Window Scaling effectively multiplies this capacity, allowing much more data to be sent before an acknowledgment is needed, making high-speed, long-distance communication efficient. This capability is negotiated right at the start of a TCP connection, during the SYN/SYN-ACK handshake."
-
-2. What I Have Done (The Attack):
-
-"My demonstration involves a Man-in-the-Middle (MITM) attack. I've used ARP poisoning to position my attacker machine directly between a client and a server. This means all their network traffic passes through my attacker."
-
-"Once in the middle, my attacker actively intercepts the initial SYN and SYN-ACK packets that are crucial for setting up a TCP connection. These are the packets where the Window Scale option is negotiated. My attack script specifically modifies these packets, for approximately half of the connections, to effectively disable TCP Window Scaling by setting the negotiation option to zero."
-
-"The result is that for those modified connections, the TCP communication is throttled back to that old, inefficient 64KB window limit. This drastically reduces the connection's effective speed and capacity."
-
-3. How I Am Validating (The Proof):
-
-"I'm validating the attack's success by observing the network traffic using Wireshark."
-
-"1.  ARP Poisoning Confirmation: First, by simply running Wireshark on my attacker machine and seeing all the traffic flowing between the client and server, it confirms my MITM position is active."
-
-"2.  Direct Attack Evidence (Window Scale Manipulation):
-* By applying the Wireshark filter: (ip.addr == 192.168.56.10 or ip.addr == 192.168.56.20) and (tcp.flags.syn == 1 or tcp.flags.syn == 1 and tcp.flags.ack == 1)
-* I can observe the SYN and SYN-ACK packets. I'll see some packets where the 'Window Scale' option (e.g., WS=128) is present, indicating normal negotiation.
-* Crucially, for the packets my attacker modified, you'll notice the absence of this large window scale, or even small Win= values displayed directly. This confirms my script successfully tampered with the negotiation for those connections."
-
-"3.  Impact Evidence (Performance Degradation):
-* When I then filter for: `tcp.analysis.retransmission`
-  * You'll see a massive number of red-highlighted `[TCP Retransmission]` packets. This is the most direct evidence of the attack's success – the connections are struggling severely, constantly re-sending data because the limited window prevents efficient flow.
-* Furthermore, if I filter for: `tcp.window_size == 0`
-  * You'll also see instances where endpoints are forced to advertise a 'Zero Window', meaning they can't accept any more data. This is a severe symptom of the connection failing due to the attack, often leading to connections being abruptly reset.
-
-These observations in Wireshark clearly show that the TCP Window Scaling Attack is effective in degrading connection performance and ultimately causing communication failures."
-
+---
 
 ## Configuration & Setup Guide
 
@@ -500,28 +505,8 @@ window-scaling-attack/
 ```
 *Expected Behavior/Observation:* You will see the initial handshake packets. Under attack, some SYN/SYN-ACK packets will be missing the Window Scale option or have WS=0, indicating the attack is modifying the handshake.
 
-**2. To see Window Scale option negotiation (look for presence/absence of WS):**
 
-```
-tcp.options.wscale
-```
-*Expected Behavior/Observation:* Normally, you should see WS values like 7 (WS=128) in the handshake. Under attack, some connections will have no WS option or WS=0, confirming the attack is disabling window scaling.
-
-**3. To see all retransmissions (evidence of performance degradation):**
-
-```
-tcp.analysis.retransmission
-```
-*Expected Behavior/Observation:* You will see many red-highlighted retransmission packets during the attack, showing that the limited window is causing data to be resent due to congestion and slow acknowledgments.
-
-**4. To see all zero window advertisements (severe congestion):**
-
-```
-tcp.window_size == 0
-```
-*Expected Behavior/Observation:* You will observe packets where the window size is zero, meaning the receiver cannot accept more data. This is a sign of severe congestion and is more frequent under attack.
-
-**5. To see all traffic between client and server (for general inspection):**
+**2. To see all traffic between client and server (for general inspection):**
 
 ```
 ip.addr == 192.168.56.10 or ip.addr == 192.168.56.20

