@@ -6,49 +6,71 @@ TCP Client for MITM Lab Testing
 import socket
 import time
 import sys
-import threading
+from datetime import datetime
+
+def send_in_chunks(sock, message, chunk_size=4096):
+    total_sent = 0
+    msg_bytes = message.encode()
+    while total_sent < len(msg_bytes):
+        sent = sock.send(msg_bytes[total_sent:total_sent+chunk_size])
+        if sent == 0:
+            raise RuntimeError("Socket connection broken")
+        total_sent += sent
+
+def send_message_with_retries(client_socket, message, server_ip, server_port, max_retries=3):
+    retries = 0
+    while retries <= max_retries:
+        try:
+            send_in_chunks(client_socket, message)
+            client_socket.settimeout(5)
+            response = client_socket.recv(4096)
+            now2 = datetime.now().strftime('%H:%M:%S')
+            print(f"[{now2}] Received response: {response.decode()[:60]}... (truncated)")
+            return True
+        except socket.timeout:
+            print(f"No response received (timeout) at {datetime.now().strftime('%H:%M:%S')}")
+            retries += 1
+            if retries > max_retries:
+                print("Max retries reached. Skipping message.")
+                return False
+        except socket.error as e:
+            print(f"Socket error during send/receive: {e}")
+            retries += 1
+            if retries > max_retries:
+                print("Max retries reached. Skipping message.")
+                return False
+            print("Reconnecting...")
+            client_socket.close()
+            time.sleep(2)
+            client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            client_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            client_socket.connect((server_ip, server_port))
+    return False
 
 def tcp_client(server_ip="192.168.56.20", server_port=8080):
     """Simple TCP client to test connections."""
-    
+    max_retries = 3
     try:
-        # Create socket
         client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        
-        # Set socket options for testing
         client_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        
         print(f"Connecting to {server_ip}:{server_port}...")
-        
-        # Connect to server
         client_socket.connect((server_ip, server_port))
         print("Connected successfully!")
-        
-        # Send some test data
         messages = [
             "Hello Server!",
             "This is a test message",
             "Testing TCP window scaling",
-            "MITM Lab Test Data"
+            "MITM Lab Test Data",
+            # Add a very large message to simulate abrupt congestion under attack
+            "BIG_MESSAGE: " + ("X" * 1024)
         ]
-        
         for i, message in enumerate(messages, 1):
-            print(f"Sending message {i}: {message}")
-            client_socket.send(message.encode())
-            
-            # Wait for response
-            try:
-                response = client_socket.recv(1024)
-                print(f"Received response: {response.decode()}")
-            except socket.timeout:
-                print("No response received")
-            
-            time.sleep(2)  # Wait 2 seconds between messages
-        
-        # Close connection
+            now = datetime.now().strftime('%H:%M:%S')
+            print(f"[{now}] Sending message {i} (len={len(message)}): ...")
+            send_message_with_retries(client_socket, message, server_ip, server_port, max_retries)
+            time.sleep(1)
         client_socket.close()
         print("Connection closed.")
-        
     except socket.error as e:
         print(f"Socket error: {e}")
     except KeyboardInterrupt:
@@ -66,27 +88,21 @@ def continuous_client(server_ip="192.168.56.20", server_port=8080, interval=5):
             connection_count += 1
             print(f"\n=== Connection #{connection_count} ===")
             
-            # Create new socket for each connection
             client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             client_socket.settimeout(10)  # 10 second timeout
             
-            # Connect
             client_socket.connect((server_ip, server_port))
             print(f"Connected to {server_ip}:{server_port}")
-            
-            # Send data
+        
             message = f"Connection #{connection_count} - {time.strftime('%H:%M:%S')}"
             client_socket.send(message.encode())
             
-            # Receive response
             response = client_socket.recv(1024)
             print(f"Server response: {response.decode()}")
             
-            # Close connection
             client_socket.close()
             print("Connection closed")
             
-            # Wait before next connection
             time.sleep(interval)
             
         except socket.error as e:

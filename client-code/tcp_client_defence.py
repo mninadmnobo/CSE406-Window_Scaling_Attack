@@ -1,0 +1,88 @@
+#!/usr/bin/env python3
+"""
+TCP Client with Robust Defence Mechanism for MITM Window Size Zero Attack
+"""
+
+import socket
+import time
+from datetime import datetime
+
+# More messages and larger payloads for robust testing
+def generate_messages():
+    base = "X" * 1024
+    return [
+        f"Message {i}: {base}" for i in range(1, 21)
+    ]
+
+def reconnect_client(client_socket, server_ip, server_port):
+    """Helper to close, wait, and reconnect the client socket."""
+    client_socket.close()
+    time.sleep(2)
+    new_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    new_socket.connect((server_ip, server_port))
+    return new_socket
+
+def handle_timeout(total_sent, total_timeouts, timeout_count, reconnections, max_reconnections, client_socket, server_ip, server_port):
+    reconnect_needed = False
+    reset_totals = False
+    # If more than 30% of packets result in timeout, warn user
+    if total_sent > 3 and total_timeouts / total_sent > 0.3:
+        print("CRITICAL: High rate of timeouts detected (>30%). Possible TCP window size zero attack!")
+        reconnect_needed = True
+        reset_totals = True
+    # If 3 consecutive timeouts, also warn and reconnect
+    elif timeout_count >= 3:
+        print("WARNING: Multiple consecutive timeouts. Possible TCP window size zero attack!")
+        reconnect_needed = True
+    if reconnect_needed:
+        if reconnections >= max_reconnections:
+            print("Max reconnection attempts reached. Exiting.")
+            return client_socket, reconnections, timeout_count, total_timeouts, total_sent, True
+        print("Attempting to reconnect...")
+        client_socket = reconnect_client(client_socket, server_ip, server_port)
+        reconnections += 1
+        timeout_count = 0
+        if reset_totals:
+            total_timeouts = 0
+            total_sent = 0
+    return client_socket, reconnections, timeout_count, total_timeouts, total_sent, False
+
+def tcp_client_defence(server_ip="192.168.56.20", server_port=8080):
+    """TCP client with robust defence against window size zero attack."""
+    messages = generate_messages()
+    max_reconnections = 5
+    client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    client_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    print(f"Connecting to {server_ip}:{server_port}...")
+    client_socket.connect((server_ip, server_port))
+    print("Connected successfully!")
+    total_sent = 0
+    total_timeouts = 0
+    timeout_count = 0
+    reconnections = 0
+    for i, message in enumerate(messages, 1):
+        now = datetime.now().strftime('%H:%M:%S')
+        print(f"[{now}] Sending message {i} (len={len(message)}): ...")
+        client_socket.send(message.encode())
+        total_sent += 1
+        try:
+            client_socket.settimeout(1.0)  # Lower timeout for demo
+            response = client_socket.recv(4096)
+            now2 = datetime.now().strftime('%H:%M:%S')
+            print(f"[{now2}] Received response: {response.decode()[:60]}... (truncated)")
+            timeout_count = 0  # Reset on success
+        except socket.timeout:
+            timeout_count += 1
+            total_timeouts += 1
+            print(f"No response received (timeout) at {datetime.now().strftime('%H:%M:%S')}")
+            client_socket, reconnections, timeout_count, total_timeouts, total_sent, should_break = handle_timeout(
+                total_sent, total_timeouts, timeout_count, reconnections, max_reconnections, client_socket, server_ip, server_port
+            )
+            if should_break:
+                break
+        time.sleep(0.5)
+    client_socket.close()
+    print(f"\nSummary: Sent={total_sent}, Timeouts={total_timeouts}, Reconnections={reconnections}")
+
+if __name__ == "__main__":
+    tcp_client_defence()
