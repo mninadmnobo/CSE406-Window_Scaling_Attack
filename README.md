@@ -280,6 +280,6 @@ On each VM, run:
 **1. To see all traffic between client and server (for general inspection):**
 
 ```wireshark
-ip.addr == 192.168.56.10 or ip.addr == 192.168.56.20
+ip.addr == 192.168.56.10 and ip.addr == 192.168.56.20 and tcp and !icmp
 ```
 *Expected Behavior/Observation:* You can inspect all packets between the client and server. Under attack, you will notice increased delays, retransmissions, and possibly abrupt connection resets.
